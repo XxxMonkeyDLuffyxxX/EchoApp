@@ -28,7 +28,7 @@ import java.util.Iterator;
 public class EchoClient {
 
     public static void main(String args[]) throws Exception{
-        String string1 = "Sending a test message";
+        String string1 = "Let the bodies hit the floor";
         //String string2 = "Second message";
         SocketTest test1 = new SocketTest(string1);
         Thread thread = new Thread(test1);

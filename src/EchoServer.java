@@ -30,6 +30,7 @@ import java.nio.channels.spi.SelectorProvider;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.lang.*;
 
 public class EchoServer implements Runnable{
 
@@ -48,13 +49,13 @@ public class EchoServer implements Runnable{
         //TODO verify user data and get IP Address
         //while((port < 10000) || ())
         try{
-            new Thread(new EchoServer(null, 100000)).start();
+            new Thread(new EchoServer(null, 10000)).start();
         }catch(IOException ie) {
             System.out.println("Well...this happened: " + ie);
         }catch(Exception e){
             System.out.println("Well...this happened: " + e);
         }
-    }
+   }
 
     public EchoServer(InetAddress hostAddress, int port )throws Exception{
         this.hostAddress = hostAddress;
@@ -107,9 +108,8 @@ public class EchoServer implements Runnable{
                 }
             }catch (Exception e){
                 System.out.println("Well...this happened: " + e);
-            }finally {
-                closeConnection();
             }
+
         }
     }
 
@@ -155,7 +155,6 @@ public class EchoServer implements Runnable{
         System.out.println("I got: " + new String (data));
 
         echo(key, data);
-
     }
 
     public void write(SelectionKey key) throws IOException{
@@ -171,9 +170,11 @@ public class EchoServer implements Runnable{
         SocketChannel socketChannel = (SocketChannel) key.channel();
 
         dataTracking.put(socketChannel, data);
+
+        key.interestOps(SelectionKey.OP_WRITE);
     }
 
-    public void closeConnection(){
+    public void closeConnection() throws IOException{
         if (selector != null){
             try {
                 selector.close();
