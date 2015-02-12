@@ -21,30 +21,30 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.SelectorProvider;
-import java.util.HashMap;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CharsetEncoder;
 import java.util.Iterator;
-import java.util.Map;
 import java.lang.*;
 
 public class EchoServer implements Runnable{
 
-    private InetAddress hostAddress = InetAddress.getLocalHost(); //IP Address of server using Inet GetHost method
+    private InetAddress hostAddress; //IP Address of server
     private ServerSocketChannel serverChannel; //A socket for the server to connect
     private Selector selector; //A Selector object for multiplexing
-    private ByteBuffer readBuffer = ByteBuffer.allocate(8192); //A Buffer object for for the channels to write to
-    private int port; //port used to connect the sockets
-
-    /**
-    * Keeps track of the data that will be written to the clients because read/write asynchronously and might be reading
-    * while the server wants to write.
-     * */
-    //Maps SocketChannel to a list of ByteBuffer instances
-    private Map<SocketChannel,byte[]> dataTracking = new HashMap<SocketChannel, byte[]>();
+    private ByteBuffer readBuffer = ByteBuffer.allocate(8192); //A ByteBuffer for reading
+    private ByteBuffer writeBuffer = ByteBuffer.allocate(8192); //A ByteBuffer for writing
+    private int port; //Port used to connect the sockets
+    private CharBuffer charBuffer;
+    private Charset charset = Charset.defaultCharset(); //Creates a charset for encode and decoding bytes to String
+    private CharsetDecoder decoder = charset.newDecoder(); //A decoder for decoding data from Buffers
+    private CharsetEncoder encoder = charset.newEncoder(); //An encoder for encoding data from Buffers
 
     /**
      * Main method. Launches thread with instance of EchoServer and moves control throughout program
@@ -54,20 +54,17 @@ public class EchoServer implements Runnable{
 
         System.out.println("Hello and welcome to EAI Design's Echo Server application"); //Status message for log/console
 
-        //TODO verify user data and get IP Address
-        //while((port < 10000) || ())
-
         try{
             new Thread(new EchoServer(null, 10000)).start(); //Starts a new thread which launches an instance of EchoServer
         }catch(IOException ie) {
-            System.out.println("Well...this happened: " + ie);
+            ie.printStackTrace();
         }catch(Exception e){
-            System.out.println("Well...this happened: " + e);
+            e.printStackTrace();
         }
-   }
+    }
 
     /**
-     * Abstraction for commonly used(and mandatory) parts of a Client/Server paradigm. trying to learn about reusable
+     * Abstraction for commonly used(and mandatory) parts of a Client/Server paradigm. Trying to learn about reusable
      *code
      */
     public EchoServer(InetAddress hostAddress, int port )throws Exception{
@@ -89,13 +86,18 @@ public class EchoServer implements Runnable{
         this.serverChannel = ServerSocketChannel.open();
         serverChannel.configureBlocking(false);
 
+        //Sets IP Address of current server system from OS
+        this.hostAddress = InetAddress.getLoopbackAddress(); //hostAddress.getLocalHost();
+
         //Binds server socket to the specified port and IP
         InetSocketAddress inetSockAddr = new InetSocketAddress(this.hostAddress, this.port);
         serverChannel.socket().bind(inetSockAddr);
 
         //Registers this server channel with the Selector and advises an interest in accepting new connections
+        System.out.println("Echo Test Server initialized...");
         serverChannel.register(socketSelector, SelectionKey.OP_ACCEPT);
 
+        System.out.println("Waiting for connections...");
         return socketSelector; //Returns new Selector object
     }
 
@@ -105,38 +107,42 @@ public class EchoServer implements Runnable{
      * sending the key the appropriate method to complete the action(Blocking)
      */
     public void run(){
+        System.out.println("Waiting...");
+
         while (true){
             try{
                 this.selector.select();//Wait for an event on one of the registered channels
 
+                System.out.println("Key received...");
+
                 Iterator selectedKeys = this.selector.selectedKeys().iterator();//Creates a key iterator object to cycle
+                System.out.println("Cycling through keys...");
 
                 //Cycle through the queue of keys from the selector
                 while(selectedKeys.hasNext()){
                     SelectionKey key = (SelectionKey) selectedKeys.next();
                     selectedKeys.remove();//Removes the current key so it is not processed again
+                    System.out.println("Removed key...");
 
                     //Check the event type of the current key and use the appropriate method as long as key is valid
                     if(!key.isValid()){
+                        System.out.println("This key was not valid...");
                         continue; //If the key IS NOT valid breaks out of loop
                     }
 
                     if(key.isAcceptable()){
+                        System.out.println("Checking if key is acceptable...");
                         this.accept(key); //Are we connecting?
                     }
 
-                    else if(key.isReadable()){
+                    if(key.isReadable()){
+                        System.out.println("Checking if key is readable...");
                         this.read(key); //Are we reading?
-                    }
-
-                    else if (key.isWritable()){
-                        this.write(key); //Are we writing?
                     }
                 }
             }catch (Exception e){
-                System.out.println("Well...this happened: " + e);
+                e.printStackTrace();
             }
-
         }
     }
 
@@ -151,79 +157,77 @@ public class EchoServer implements Runnable{
         ServerSocketChannel serverSocketChannel = (ServerSocketChannel) key.channel();
 
         SocketChannel socketChannel = serverSocketChannel.accept();
+
+        //Prints to console a status message of a connection
+        System.out.println("Received an incoming connection from" + socketChannel.socket().getRemoteSocketAddress());
+
         socketChannel.configureBlocking(false);
+        System.out.println("Connecting...");
 
         //Registers the channel with the selector and sets a request for any READ operations
         socketChannel.register(this.selector, SelectionKey.OP_READ);
 
-        //Prints to console a status message of a connection
-        System.out.println("Received an incoming connection from" + socketChannel.socket().getRemoteSocketAddress());
+        System.out.println("Listening for read requests on socketChannel " + socketChannel.socket());
     }
 
     public void read(SelectionKey key) throws IOException{
         SocketChannel socketChannel = (SocketChannel) key.channel();
 
-        this.readBuffer.clear();//Clears the readBuffer for new incoming data from the socket channel
+        this.readBuffer.clear(); //Clears the readBuffer for new incoming data from the socket channel(Clear before read)
 
-        int numRead; // Variable to hold data while we scan it in from the socket channel
+        int bytesRead; //Variable to hold data while we scan it in from the socket channel
+        bytesRead = socketChannel.read(this.readBuffer);//Read from the socket channel
 
-        //Attempt to read from the socket channel
-        try{
-            numRead = socketChannel.read(this.readBuffer); //Scans the bytes from the buffer into numRead
-        }catch(IOException ie){
-            System.out.println("Well...this happened: " + ie);
-            System.out.println("Client forcibly closed connection (likely connection was lost)so canceling the " +
-                    "current key and closing channel");
-
-            key.cancel(); //Delete the current key
-            socketChannel.close(); //Close the socket's channel
-            return;
-        }
+        System.out.println("Reading from the Buffer...");
 
         //Client shut the connection down cleanly so readBuffer has -1 int
-        if (numRead == -1) {
-            System.out.println("The remote connection has cleanly shut down. The server is doing the same.");
-            key.channel().close();
+        if(bytesRead == -1) {
             key.cancel();
+            socketChannel.close();
+            System.out.println("logout: " + socketChannel.socket().getInetAddress());
+            System.out.println("The remote connection has cleanly shut down. The server is doing the same.");
             return;
         }
 
-        this.readBuffer.flip(); //Prepares readBuffer to take in new data
+        this.readBuffer.flip(); //Prepare the readBuffer for writing to the CharBuffer
 
-        byte[] data = new byte[1000]; //Creates a new Byte array to send the data read in
+        System.out.println("Decoding...");
+        charBuffer = decoder.decode(readBuffer);//Decoding the incoming bytes to systems native characters
 
-        this.readBuffer.get(data, 0, numRead); //Reads data from numRead into Byte array
-        System.out.println("I got: " + new String (data)); //Prints to console/log what was received
+        echo(key, charBuffer); //Passing to echo(method)
+    }
 
-        echo(key, data); //Sends Selection key and Byte array to echo() method to be reproduced and "echoed" back to Client
+    public void echo (SelectionKey key, CharBuffer charBuffer) throws IOException{
+        SocketChannel socketChannel = (SocketChannel) key.channel();
+        String message = charBuffer.toString();
+
+        System.out.println("Converting bytes to String...");
+        System.out.println("Message received from Client: " + message);
+
+        try {
+            System.out.println("Encoding to echo bytes back...");
+            writeBuffer = encoder.encode(charBuffer);
+
+            System.out.println("Echoing bytes to: " + socketChannel.socket().getInetAddress());
+            socketChannel.write(writeBuffer);
+            System.out.println("Bytes sent.");
+        }catch(IOException ie){
+            ie.printStackTrace();
+        }
+        writeBuffer.flip();//flips the write buffer to prepare to write again
+
+        key.interestOps(SelectionKey.OP_WRITE); //Sets the current key to the writing method
     }
 
     public void write(SelectionKey key) throws IOException{
         SocketChannel socketChannel = (SocketChannel) key.channel();
 
-        byte[] data = dataTracking.get(socketChannel); //Creates a Byte array that is linked to a hashmap for continuity
-        dataTracking.remove(socketChannel);
+        this.writeBuffer = readBuffer;
 
-        socketChannel.write(ByteBuffer.wrap(data)); //Writes data to current socket Channel via a wrapper method
-    }
+        socketChannel.write(writeBuffer);
+        /**byte[] data = dataTracking.get(socketChannel); //Creates a Byte array that is linked to a hashmap for continuity
+         dataTracking.remove(socketChannel);
 
-    public void echo(SelectionKey key, byte[] data){
-        SocketChannel socketChannel = (SocketChannel) key.channel();
-
-        dataTracking.put(socketChannel, data); //Sends the bytes in the hashmap to the Client
-
-        key.interestOps(SelectionKey.OP_WRITE); //Sets the current key to the writing method
-    }
-
-    public void closeConnection() throws IOException{
-        if (selector != null){
-            try {
-                selector.close();
-                serverChannel.socket().close();
-                serverChannel.close();
-            } catch (IOException ie) {
-                System.out.println("Well...this happened: " + ie);
-            }
-        }
+         socketChannel.write(ByteBuffer.wrap(data)); //Writes data to current socket Channel via a wrapper method**/
     }
 }
