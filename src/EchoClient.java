@@ -63,20 +63,20 @@ public class EchoClient {
 
                     Iterator<SelectionKey> keys = selector.selectedKeys().iterator();
 
-                    while (keys.hasNext()){
+                    while (keys.hasNext()) {
                         SelectionKey key = keys.next();
                         keys.remove();
 
                         if (!key.isValid()) continue;
 
-                        if (key.isConnectable()){
+                        if (key.isConnectable()) {
                             System.out.println("I am connected to the server");
                             connect(key);
                         }
-                        if (key.isWritable()){
+                        if (key.isWritable()) {
                             write(key);
                         }
-                        if (key.isReadable()){
+                        if (key.isReadable()) {
                             read(key);
                         }
                     }
