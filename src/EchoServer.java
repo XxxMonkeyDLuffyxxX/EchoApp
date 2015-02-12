@@ -20,7 +20,6 @@
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
@@ -42,7 +41,9 @@ public class EchoServer implements Runnable{
 
     /**
     * Keeps track of the data that will be written to the clients because read/write asynchronously and might be reading
-    * while the server wants to write.*/
+    * while the server wants to write.
+     * */
+    //Maps SocketChannel to a list of ByteBuffer instances
     private Map<SocketChannel,byte[]> dataTracking = new HashMap<SocketChannel, byte[]>();
 
     /**
@@ -76,40 +77,46 @@ public class EchoServer implements Runnable{
     }
 
     /**
-     * Method to create a Selector, Server socket channel, and  Inet Address socket( IP address) objects--set it up
-     * correctly, then return the object to the main program
+     * Method to create a new Selector for the Server. This is how we create a multiplexing system. The selector
+     * created by this method will have an empty key set until the last line of the method where the register() method
+     * is called and the server channel is added. The key is set to an OP_ACCEPT to wait for a new connection
      */
     private Selector initSelector() throws Exception{
-        Selector socketSelector  = SelectorProvider.provider().openSelector(); //creates a socketSelector and set to open
+        //Creates a new selector using the system's default provider to do so
+        Selector socketSelector  = SelectorProvider.provider().openSelector();
 
-        this.serverChannel = ServerSocketChannel.open(); //Sets the global variable to local
-        serverChannel.configureBlocking(false); //Set server channel to non-blocking (Multiplexing) locally
+        //Creates a new non-blocking server socket channel
+        this.serverChannel = ServerSocketChannel.open();
+        serverChannel.configureBlocking(false);
 
-        InetSocketAddress inetSockAddr = new InetSocketAddress(this.hostAddress, this.port);//Sets IP Address locally
-        serverChannel.socket().bind(inetSockAddr); //Binds server socket to Inet Socket object
+        //Binds server socket to the specified port and IP
+        InetSocketAddress inetSockAddr = new InetSocketAddress(this.hostAddress, this.port);
+        serverChannel.socket().bind(inetSockAddr);
 
-        //Registers this server channel with the Selector. Also tells Selector that channel is set to expect connections
+        //Registers this server channel with the Selector and advises an interest in accepting new connections
         serverChannel.register(socketSelector, SelectionKey.OP_ACCEPT);
 
         return socketSelector; //Returns new Selector object
     }
 
     /**
-     * The heart and soul of the Server program logic. Runs an infinite loop to accept connections and continusly check
-     * the Selector keys for the next action to be taken
+     * The heart and soul of the Server program logic. Runs an infinite loop to accept connections and continuously check
+     * the Selector keys for the next action to be taken. Based on event type of key, performs required action via
+     * sending the key the appropriate method to complete the action(Blocking)
      */
     public void run(){
         while (true){
             try{
-                this.selector.select();
+                this.selector.select();//Wait for an event on one of the registered channels
 
                 Iterator selectedKeys = this.selector.selectedKeys().iterator();//Creates a key iterator object to cycle
 
-                //Looks at the next key in the set for another action. Checks key type and sends to appropriate method
+                //Cycle through the queue of keys from the selector
                 while(selectedKeys.hasNext()){
                     SelectionKey key = (SelectionKey) selectedKeys.next();
-                    selectedKeys.remove();
+                    selectedKeys.remove();//Removes the current key so it is not processed again
 
+                    //Check the event type of the current key and use the appropriate method as long as key is valid
                     if(!key.isValid()){
                         continue; //If the key IS NOT valid breaks out of loop
                     }
@@ -134,41 +141,48 @@ public class EchoServer implements Runnable{
     }
 
     /**
-     * Accept Method to "accept" a new connection, register it with a socket channel, and alert the selector to the
-     * next action. Configures socket to non-blocking. Pretty much every action method will hav this similar framework.
-     * I have included additional comments where it necessitates
+     * The following blocks of code handle the operations of the server. Using the first method as a template, each
+     * creates a server socket channel(only with accept method) or socketChannel to connect to the pending client's
+     * socket channel. The backend automatically assigns a random port number to each of these sockets. It then
+     * attempts a connection and configures the channel to non-blocking. I have included additional comments where
+     * it necessitates
      */
     public void accept(SelectionKey key)throws IOException{
         ServerSocketChannel serverSocketChannel = (ServerSocketChannel) key.channel();
 
         SocketChannel socketChannel = serverSocketChannel.accept();
-        Socket socket = socketChannel.socket();
         socketChannel.configureBlocking(false);
 
+        //Registers the channel with the selector and sets a request for any READ operations
         socketChannel.register(this.selector, SelectionKey.OP_READ);
+
+        //Prints to console a status message of a connection
+        System.out.println("Received an incoming connection from" + socketChannel.socket().getRemoteSocketAddress());
     }
 
     public void read(SelectionKey key) throws IOException{
         SocketChannel socketChannel = (SocketChannel) key.channel();
 
-        this.readBuffer.clear();//Clears the information that maybe left in the buffer
+        this.readBuffer.clear();//Clears the readBuffer for new incoming data from the socket channel
 
-        int numRead; //Instance variable to hold data while we scan it in from the Client
+        int numRead; // Variable to hold data while we scan it in from the socket channel
 
+        //Attempt to read from the socket channel
         try{
-            numRead = socketChannel.read(this.readBuffer); //Scans the bytes from the channel into numRead
+            numRead = socketChannel.read(this.readBuffer); //Scans the bytes from the buffer into numRead
         }catch(IOException ie){
             System.out.println("Well...this happened: " + ie);
             System.out.println("Client forcibly closed connection (likely connection was lost)so canceling the " +
                     "current key and closing channel");
 
             key.cancel(); //Delete the current key
-            socketChannel.close(); //Close the channel
+            socketChannel.close(); //Close the socket's channel
             return;
         }
 
-        //Checks to make sure there is data in the read buffer. Closes channel and deletes key if not
-        if (numRead == -1){
+        //Client shut the connection down cleanly so readBuffer has -1 int
+        if (numRead == -1) {
+            System.out.println("The remote connection has cleanly shut down. The server is doing the same.");
             key.channel().close();
             key.cancel();
             return;
